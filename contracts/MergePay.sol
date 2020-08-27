@@ -2,6 +2,7 @@
 pragma solidity ^0.6.0;
 
 import "@chainlink/contracts/src/v0.6/ChainlinkClient.sol";
+import "./MergeCoin.sol";
 
 contract MergePay is ChainlinkClient {
   struct Deposit {
@@ -36,11 +37,14 @@ contract MergePay is ChainlinkClient {
   Deposit[] private _deposits;
   User[] private _users;
 
+  MergeCoin _mergeCoin;
+
   address private clOracle;
   bytes32 private clJobId;
   uint256 private clFee;
 
-  constructor() public {
+  constructor(address mergeCoinAddress) public {
+    _mergeCoin = MergeCoin(mergeCoinAddress);
     setPublicChainlinkToken();
     clOracle = 0xc99B3D447826532722E41bc36e644ba3479E4365;
     clJobId = "3cff0a3524694ff8834bda9cf9c779a1";
@@ -112,5 +116,6 @@ contract MergePay is ChainlinkClient {
       // withdraw everything
     // githubUser is sender of a deposit
       // withdraw only own deposit
+    // mint merge coin if withdrawer != deposit owner
   }
 }

@@ -6,4 +6,8 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract MergeCoin is ERC20, Ownable {
     constructor() ERC20("MyNFT", "MNFT") public {}
+
+    function mint(address _account, uint256 _amount) public onlyOwner {
+     _mint(_account, _amount);
+   }
 }
