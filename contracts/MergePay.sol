@@ -8,11 +8,11 @@ import "./MergeCoin.sol";
 contract MergePay is ChainlinkClient, Ownable {
   struct Deposit {
     uint256 amount;
-    uint8 type; // Issues = 1, Pull Requests = 2
+    uint8 issueOrPr; // 1 = issue, 2 = pr
     uint256 id;
     address sender;
-    uint64 addedTimestamp;
-    uint64 lockedUntilTimestamp;
+    uint256 addedTimestamp;
+    uint256 lockedUntilTimestamp;
   }
 
   struct Withdrawal {
@@ -31,7 +31,7 @@ contract MergePay is ChainlinkClient, Ownable {
 
   event DepositEvent(
     uint256 amount,
-    uint8 type,
+    uint8 issueOrPr,
     uint256 id,
     address sender
   );
@@ -55,7 +55,7 @@ contract MergePay is ChainlinkClient, Ownable {
   uint256 private clFee;
 
   uint32 private maxLockDays = 180;
-  string private _blacklistedGithubUsers[]; // Blacklisted users cannot withdraw from their merged pull requests.
+  string[] private _blacklistedGithubUsers; // Blacklisted users cannot withdraw from their merged pull requests.
 
   /// @dev Initiates MergeCoin and Chainlink.
   /// @param mergeCoinAddress The contract address of MergeCoin
@@ -70,9 +70,9 @@ contract MergePay is ChainlinkClient, Ownable {
 
   /// @dev Deposit ETH on any pull request or issue on GitHub.
   /// @dev TODO: lock up deposit
-  /// @param type Issues = 1, Pull Requests = 2
+  /// @param issueOrPr Issues = 1, Pull Requests = 2
   /// @param id The node ID of the issue or pr
-  function deposit(uint8 type, uint256 id, uint64 lockDays) external payable {
+  function deposit(uint8 issueOrPr, uint256 id, uint64 lockDays) external payable {
     require(msg.value > 0, "No ether sent.");
 
     // cap lockDays to ~ half a year
@@ -84,7 +84,7 @@ contract MergePay is ChainlinkClient, Ownable {
     bool updatedExisting = false;
     for (uint256 i; i < _deposits.length; i++) {
       if (
-        _deposits[i].type == type &&
+        _deposits[i].issueOrPr == issueOrPr &&
         _deposits[i].id == id &&
         _deposits[i].sender == msg.sender
       ) {
@@ -98,7 +98,7 @@ contract MergePay is ChainlinkClient, Ownable {
         updatedExisting = true;
         emit DepositEvent(
           _deposits[i].amount,
-          _deposits[i].type,
+          _deposits[i].issueOrPr,
           _deposits[i].id,
           _deposits[i].sender
         );
@@ -108,9 +108,9 @@ contract MergePay is ChainlinkClient, Ownable {
 
     // add new deposit
     if (!updatedExisting) {
-      Deposit memory newDeposit = Deposit(msg.value, type, id, prId, msg.sender, now, now + lockDays * 1 days);
+      Deposit memory newDeposit = Deposit(msg.value, issueOrPr, id, msg.sender, now, now + lockDays * 1 days);
       _deposits.push(newDeposit);
-      emit DepositEvent(msg.value, type, id, msg.sender);
+      emit DepositEvent(msg.value, issueOrPr, id, msg.sender);
 
       if (lockDays > 0) {
         mintMergeCoin(msg.sender, msg.value, lockDays);
@@ -165,26 +165,46 @@ contract MergePay is ChainlinkClient, Ownable {
   }
 
   /// @dev Send deposit back to sender.
-  function refund(uint8 type, uint256 id) external {
+  function refund(uint8 issueOrPr, uint256 id) external {
     // find index
-    int256 depositIndex = -1;
-    Deposit refundDeposit;
+    Deposit storage refundDeposit;
     for (uint256 i; i < _deposits.length; i++) {
       if (
-        _deposits[i].type == type &&
+        _deposits[i].issueOrPr == issueOrPr &&
         _deposits[i].id == id &&
         _deposits[i].sender == msg.sender &&
         _deposits[i].amount > 0
       ) {
-        depositIndex = i;
+        refundDeposit = _deposits[i];
         break;
       }
     }
 
-    require(depositIndex != -1, "No deposit found.");
-    require(_deposits[depositIndex].lockedUntilTimestamp < now, "Deposit is locked.");
+    require(refundDeposit.amount > 0, "No deposit found.");
+    require(refundDeposit.lockedUntilTimestamp < now, "Deposit is locked.");
     payable(msg.sender).transfer(refundDeposit.amount);
-    _deposits[depositIndex].amount = 0;
+    refundDeposit.amount = 0;
+  }
+
+  /// @dev Send deposit back to sender regardless of lock.
+  function forceRefund(address recipient, uint8 issueOrPr, uint256 id) external onlyOwner {
+    // find index
+    Deposit storage refundDeposit;
+    for (uint256 i; i < _deposits.length; i++) {
+      if (
+        _deposits[i].issueOrPr == issueOrPr &&
+        _deposits[i].id == id &&
+        _deposits[i].sender == msg.sender &&
+        _deposits[i].amount > 0
+      ) {
+        refundDeposit = _deposits[i];
+        break;
+      }
+    }
+
+    require(refundDeposit.amount > 0, "No deposit found.");
+    payable(msg.sender).transfer(refundDeposit.amount);
+    refundDeposit.amount = 0;
   }
 
   /// @dev Send deposit back to sender.
@@ -205,33 +225,11 @@ contract MergePay is ChainlinkClient, Ownable {
     payable(msg.sender).transfer(amount);
   }
 
-  /// @dev Send deposit back to sender regardless of lock.
-  function forceRefund(address recipient, uint8 type, uint256 id) external onlyOwner {
-    // find index
-    int256 depositIndex = -1;
-    Deposit refundDeposit;
-    for (uint256 i; i < _deposits.length; i++) {
-      if (
-        _deposits[i].type == type &&
-        _deposits[i].id == id &&
-        _deposits[i].sender == recipient &&
-        _deposits[i].amount > 0
-      ) {
-        depositIndex = i;
-        break;
-      }
-    }
-
-    require(depositIndex != -1, "No deposit found.");
-    payable(recipient).transfer(refundDeposit.amount);
-    _deposits[depositIndex].amount = 0;
-  }
-
-  function addUserToBlacklist(string githubUser) external onlyOwner {
+  function addUserToBlacklist(string memory githubUser) external onlyOwner {
     _blacklistedGithubUsers.push(githubUser);
   }
 
-  function removeUserFromBlacklist(string githubUser) external onlyOwner {
+  function removeUserFromBlacklist(string memory githubUser) external onlyOwner {
     for (uint256 i = 0; i < _blacklistedGithubUsers.length; i++) {
       if (_blacklistedGithubUsers[i] == githubUser) {
         delete _blacklistedGithubUsers[i];
@@ -240,7 +238,6 @@ contract MergePay is ChainlinkClient, Ownable {
   }
 
   /// @dev Send deposit to contributor (anyone != deposit.sender).
-  /// @param githubuUser The GitHub username of the user who wants to withdraw.
   /// @param prId The node ID of the issue or pr
   function withdraw(uint256 prId) external {
     // checks:
@@ -259,7 +256,7 @@ contract MergePay is ChainlinkClient, Ownable {
         break;
       }
     }
-    require(user.confirmed, "Your account is not registered.")
+    require(user.confirmed, "Your account is not registered.");
 
     for (uint256 i = 0; i < _blacklistedGithubUsers; i++) {
       require(user.githubUser != _blacklistedGithubUsers[i], "This GitHub account is blacklisted.");
@@ -267,14 +264,14 @@ contract MergePay is ChainlinkClient, Ownable {
 
     bool depositsFound = false;
     for (uint256 i; i < _deposits.length; i++) {
-      if (_deposits[i].type == 2 && _deposits[i].id = prId) {
+      if (_deposits[i].issueOrPr == 2 && _deposits[i].id = prId) {
         depositsFound = true;
       }
     }
     require(depositsFound, "There are no deposits for this pull request.");
 
     Chainlink.Request memory request = buildChainlinkRequest(clJobIdWithdraw, address(this), this.withdrawalConfirm.selector);
-    request.add("username", githubUser);
+    request.add("username", user.githubUser);
     request.add("prId", prId);
     bytes32 requestId = sendChainlinkRequestTo(clOracle, request, clFee);
     _pendingWithdrawals.push(Withdrawal(msg.sender, prId, requestId, false));
@@ -297,7 +294,7 @@ contract MergePay is ChainlinkClient, Ownable {
     // execute
     uint256 amount = 0;
     for (uint256 i; i < _deposits.length; i++) {
-      if (_deposits[i].type == 2 && _deposits[i].id = prId) {
+      if (_deposits[i].issueOrPr == 2 && _deposits[i].id == pendingWithdrawal.prId) {
         amount += _deposits[i].amount;
         _deposits[i].amount = 0;
       }
@@ -309,8 +306,6 @@ contract MergePay is ChainlinkClient, Ownable {
   }
 
   /// @dev Convert address type to string type.
-  /// @param _address The address to convert
-  /// @returns _uintAsString The string representation of _address
   function addressToString(address _address) public pure returns (string memory _uintAsString) {
     uint _i = uint256(_address);
     if (_i == 0) {
@@ -339,7 +334,7 @@ contract MergePay is ChainlinkClient, Ownable {
   /// @param lockDays The number of days the deposit will be locked
   function mintMergeCoin(address recipient, uint256 value, uint64 lockDays) internal {
     if (lockDays > 0 && value > 0) {
-      _mergeCoin.mint(recipient, value * (lockDays / (maxLockDays / 2));
+      _mergeCoin.mint(recipient, value * (lockDays / (maxLockDays / 2)));
     }
   }
 }
