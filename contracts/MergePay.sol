@@ -8,11 +8,18 @@ import "./MergeCoin.sol";
 contract MergePay is ChainlinkClient, Ownable {
   struct Deposit {
     uint256 amount;
-    uint8 type;
+    uint8 type; // Issues = 1, Pull Requests = 2
     uint256 id;
     address sender;
     uint64 addedTimestamp;
     uint64 lockedUntilTimestamp;
+  }
+
+  struct Withdrawal {
+    address recipient;
+    uint256 prId;
+    bytes32 chainlinkRequestId;
+    bool executed;
   }
 
   struct User {
@@ -28,6 +35,7 @@ contract MergePay is ChainlinkClient, Ownable {
     uint256 id,
     address sender
   );
+
   event RegistrationConfirmedEvent(
     address account,
     string githubUser,
@@ -35,20 +43,15 @@ contract MergePay is ChainlinkClient, Ownable {
     bytes32 chainlinkRequestId
   );
 
-  modifier notBlacklisted(string githubUser) {
-    for (uint256 i = 0; i < _blacklistedGithubUsers; i++) {
-      require(githubUser != _blacklistedGithubUsers[i], "This GitHub account is blacklisted.");
-    }
-    _;
-  }
-
   Deposit[] private _deposits;
+  Withdrawal[] private _pendingWithdrawals;
   User[] private _users;
 
   MergeCoin _mergeCoin;
 
   address private clOracle;
-  bytes32 private clJobId;
+  bytes32 private clJobIdRegister;
+  bytes32 private clJobIdWithdraw;
   uint256 private clFee;
 
   uint32 private maxLockDays = 180;
@@ -60,7 +63,8 @@ contract MergePay is ChainlinkClient, Ownable {
     _mergeCoin = MergeCoin(mergeCoinAddress);
     setPublicChainlinkToken();
     clOracle = 0xc99B3D447826532722E41bc36e644ba3479E4365;
-    clJobId = "3cff0a3524694ff8834bda9cf9c779a1";
+    clJobIdRegister = "3cff0a3524694ff8834bda9cf9c779a1";
+    clJobIdWithdraw = "3cff0a3524694ff8834bda9cf9c779a1";
     clFee = 0.1 * 10 ** 18; // 0.1 LINK
   }
 
@@ -119,7 +123,7 @@ contract MergePay is ChainlinkClient, Ownable {
   /// @dev a chainlink request, that will be fullfilled in registerConfirm.
   /// @param githubUser The GitHub username to register
   function register(string memory githubUser) external  {
-    Chainlink.Request memory request = buildChainlinkRequest(clJobId, address(this), this.registerConfirm.selector);
+    Chainlink.Request memory request = buildChainlinkRequest(clJobIdRegister, address(this), this.registerConfirm.selector);
     request.add("username", githubUser);
     request.add("repo", addressToString(msg.sender));
     bytes32 requestId = sendChainlinkRequestTo(clOracle, request, clFee);
@@ -237,9 +241,8 @@ contract MergePay is ChainlinkClient, Ownable {
 
   /// @dev Send deposit to contributor (anyone != deposit.sender).
   /// @param githubuUser The GitHub username of the user who wants to withdraw.
-  /// @param type Issues = 1, Pull Requests = 2
-  /// @param id The node ID of the issue or pr
-  function withdraw(string memory githubUser, uint8 type, uint256 id) external notBlacklisted(githubUser) {
+  /// @param prId The node ID of the issue or pr
+  function withdraw(uint256 prId) external {
     // checks:
     // provided githubUser has repo with name of msg.sender (proof of github account, can receive funds) [chainlink->repourl->id]
     // pr is merged and pr author is the provided githubUser [chainlink->pr->merged]
@@ -247,6 +250,62 @@ contract MergePay is ChainlinkClient, Ownable {
     // githubUser is sender of a deposit
       // withdraw only own deposit
     // mint merge coin if withdrawer != deposit owner
+
+    // get githubuUser for address
+    User memory user;
+    for (uint256 i = 0; i < _users; i++) {
+      if (_users[i].account == msg.sender) {
+        user = _users[i];
+        break;
+      }
+    }
+    require(user.confirmed, "Your account is not registered.")
+
+    for (uint256 i = 0; i < _blacklistedGithubUsers; i++) {
+      require(user.githubUser != _blacklistedGithubUsers[i], "This GitHub account is blacklisted.");
+    }
+
+    bool depositsFound = false;
+    for (uint256 i; i < _deposits.length; i++) {
+      if (_deposits[i].type == 2 && _deposits[i].id = prId) {
+        depositsFound = true;
+      }
+    }
+    require(depositsFound, "There are no deposits for this pull request.");
+
+    Chainlink.Request memory request = buildChainlinkRequest(clJobIdWithdraw, address(this), this.withdrawalConfirm.selector);
+    request.add("username", githubUser);
+    request.add("prId", prId);
+    bytes32 requestId = sendChainlinkRequestTo(clOracle, request, clFee);
+    _pendingWithdrawals.push(Withdrawal(msg.sender, prId, requestId, false));
+  }
+
+  /// @dev Chainlink fullfill method. Executes withdrawal.
+  /// @param _requestId The Chainlink request ID
+  /// @param confirmed Whether a repo named after the address was found or not
+  function withdrawConfirm(bytes32 _requestId, bool confirmed) external {
+    require(confirmed, "Eligibility for withdrawal could not be validated. Is the pull request merged? Are you connected to the right GitHub account?");
+    // get pending withdrawal
+    Withdrawal storage pendingWithdrawal;
+    for (uint256 i = 0; i < _pendingWithdrawals.length; i++) {
+      if (_pendingWithdrawals[i].chainlinkRequestId == _requestId && _pendingWithdrawals[i].executed == false) {
+        pendingWithdrawal = _pendingWithdrawals[i];
+        break;
+      }
+    }
+    require(pendingWithdrawal.prId > 0, "No pending withdrawal found.");
+    // execute
+    uint256 amount = 0;
+    for (uint256 i; i < _deposits.length; i++) {
+      if (_deposits[i].type == 2 && _deposits[i].id = prId) {
+        amount += _deposits[i].amount;
+        _deposits[i].amount = 0;
+      }
+    }
+
+    require(amount > 0, "No deposited ETH to withdraw.");
+    payable(pendingWithdrawal.recipient).transfer(amount);
+    pendingWithdrawal.executed = true;
   }
 
   /// @dev Convert address type to string type.
