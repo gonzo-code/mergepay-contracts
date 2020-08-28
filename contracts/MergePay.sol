@@ -118,12 +118,27 @@ contract MergePay is ChainlinkClient, Ownable {
   /// @dev githubUser named after msg.sender. Adds user as unconfirmed and sends
   /// @dev a chainlink request, that will be fullfilled in registerConfirm.
   /// @param githubUser The GitHub username to register
-  function register(string memory githubUser) external notBlacklisted(githubUser) {
+  function register(string memory githubUser) external  {
     Chainlink.Request memory request = buildChainlinkRequest(clJobId, address(this), this.registerConfirm.selector);
     request.add("username", githubUser);
     request.add("repo", addressToString(msg.sender));
     bytes32 requestId = sendChainlinkRequestTo(clOracle, request, clFee);
-    _users.push(User(msg.sender, githubUser, false, requestId));
+
+    // check if user already exists
+    User storage existingUser;
+    for (uint256 i; i < _users.length; i++) {
+      if (_users[i].githubUser == githubUser) {
+        existingUser = _users[i];
+        break;
+      }
+    }
+
+    // update request id or add new user
+    if (existingUser) {
+      existingUser.chainlinkRequestId = requestId;
+    } else {
+      _users.push(User(msg.sender, githubUser, false, requestId));
+    }
   }
 
   /// @dev Chainlink fullfill method. Sets unconfirmed user to confirmed if repo exists.
