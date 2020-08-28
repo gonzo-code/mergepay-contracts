@@ -119,7 +119,26 @@ contract MergePay is ChainlinkClient {
   }
 
   /// @dev Send deposit back to sender.
-  function refund() external {}
+  function refund(uint8 type, uint256 id) external {
+    // find index
+    int256 depositIndex = -1;
+    Deposit refundDeposit;
+    for (uint256 i; i < _deposits.length; i++) {
+      if (
+        _deposits[i].type == type &&
+        _deposits[i].id == id &&
+        _deposits[i].sender == msg.sender &&
+        _deposits[i].amount > 0
+      ) {
+        depositIndex = i;
+        break;
+      }
+    }
+
+    require(depositIndex != -1, "No deposit found.");
+    payable(msg.sender).transfer(refundDeposit.amount);
+    _deposits[depositIndex].amount = 0;
+  }
 
   /// @dev Send deposit to contributor (anyone != deposit.sender).
   /// @param githubuUser The GitHub username of the user who wants to withdraw.
