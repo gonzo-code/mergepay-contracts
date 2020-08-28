@@ -17,7 +17,7 @@ contract MergePay is ChainlinkClient, Ownable {
 
   struct User {
     address account;
-    string githubUser;
+    string githubUser; // TODO: use user ID instead
     bool confirmed;
     bytes32 chainlinkRequestId;
   }
