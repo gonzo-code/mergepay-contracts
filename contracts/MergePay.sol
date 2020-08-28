@@ -2,14 +2,17 @@
 pragma solidity ^0.6.0;
 
 import "@chainlink/contracts/src/v0.6/ChainlinkClient.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "./MergeCoin.sol";
 
-contract MergePay is ChainlinkClient {
+contract MergePay is ChainlinkClient, Ownable {
   struct Deposit {
     uint256 amount;
     uint8 type;
     uint256 id;
     address sender;
+    uint64 addedTimestamp;
+    uint64 lockedUntilTimestamp;
   }
 
   struct User {
@@ -32,6 +35,13 @@ contract MergePay is ChainlinkClient {
     bytes32 chainlinkRequestId
   );
 
+  modifier notBlacklisted(string githubUser) {
+    for (uint256 i = 0; i < _blacklistedGithubUsers; i++) {
+      require(githubUser != _blacklistedGithubUsers[i], "This GitHub account is blacklisted.");
+    }
+    _;
+  }
+
   Deposit[] private _deposits;
   User[] private _users;
 
@@ -40,6 +50,9 @@ contract MergePay is ChainlinkClient {
   address private clOracle;
   bytes32 private clJobId;
   uint256 private clFee;
+
+  uint32 private maxLockDays = 180;
+  string private _blacklistedGithubUsers[]; // Blacklisted users cannot withdraw from their merged pull requests.
 
   /// @dev Initiates MergeCoin and Chainlink.
   /// @param mergeCoinAddress The contract address of MergeCoin
@@ -55,8 +68,13 @@ contract MergePay is ChainlinkClient {
   /// @dev TODO: lock up deposit
   /// @param type Issues = 1, Pull Requests = 2
   /// @param id The node ID of the issue or pr
-  function deposit(uint8 type, uint256 id) external payable {
+  function deposit(uint8 type, uint256 id, uint64 lockDays) external payable {
     require(msg.value > 0, "No ether sent.");
+
+    // cap lockDays to ~ half a year
+    if (lockDays > maxLockDays) {
+      lockDays = maxLockDays;
+    }
 
     // find existing deposit
     bool updatedExisting = false;
@@ -68,6 +86,11 @@ contract MergePay is ChainlinkClient {
       ) {
         // add amount to existing deposit
         _deposits[i].amount += msg.value;
+        // override lock
+        if (lockDays > 0 && _deposits[i].lockedUntilTimestamp < now + lockDays * 1 days) {
+          _deposits[i].lockedUntilTimestamp += now + lockDays * 1 days;
+          mintMergeCoin(msg.sender, msg.value, lockDays);
+        }
         updatedExisting = true;
         emit DepositEvent(
           _deposits[i].amount,
@@ -81,9 +104,13 @@ contract MergePay is ChainlinkClient {
 
     // add new deposit
     if (!updatedExisting) {
-      Deposit memory newDeposit = Deposit(msg.value, type, id, prId, msg.sender);
+      Deposit memory newDeposit = Deposit(msg.value, type, id, prId, msg.sender, now, now + lockDays * 1 days);
       _deposits.push(newDeposit);
       emit DepositEvent(msg.value, type, id, msg.sender);
+
+      if (lockDays > 0) {
+        mintMergeCoin(msg.sender, msg.value, lockDays);
+      }
     }
   }
 
@@ -91,7 +118,7 @@ contract MergePay is ChainlinkClient {
   /// @dev githubUser named after msg.sender. Adds user as unconfirmed and sends
   /// @dev a chainlink request, that will be fullfilled in registerConfirm.
   /// @param githubUser The GitHub username to register
-  function register(string memory githubUser) external {
+  function register(string memory githubUser) external notBlacklisted(githubUser) {
     Chainlink.Request memory request = buildChainlinkRequest(clJobId, address(this), this.registerConfirm.selector);
     request.add("username", githubUser);
     request.add("repo", addressToString(msg.sender));
@@ -136,15 +163,68 @@ contract MergePay is ChainlinkClient {
     }
 
     require(depositIndex != -1, "No deposit found.");
+    require(_deposits[depositIndex].lockedUntilTimestamp < now, "Deposit is locked.");
     payable(msg.sender).transfer(refundDeposit.amount);
     _deposits[depositIndex].amount = 0;
+  }
+
+  /// @dev Send deposit back to sender.
+  function refundAll() external {
+    uint256 amount = 0;
+    for (uint256 i; i < _deposits.length; i++) {
+      if (
+        _deposits[i].sender == msg.sender &&
+        _deposits[i].amount > 0 &&
+        _deposits[i].lockedUntilTimestamp < now
+      ) {
+        amount += _deposits[i].amount;
+        _deposits[i].amount = 0;
+      }
+    }
+
+    require(amount > 0, "No deposits found.");
+    payable(msg.sender).transfer(amount);
+  }
+
+  /// @dev Send deposit back to sender regardless of lock.
+  function forceRefund(address recipient, uint8 type, uint256 id) external onlyOwner {
+    // find index
+    int256 depositIndex = -1;
+    Deposit refundDeposit;
+    for (uint256 i; i < _deposits.length; i++) {
+      if (
+        _deposits[i].type == type &&
+        _deposits[i].id == id &&
+        _deposits[i].sender == recipient &&
+        _deposits[i].amount > 0
+      ) {
+        depositIndex = i;
+        break;
+      }
+    }
+
+    require(depositIndex != -1, "No deposit found.");
+    payable(recipient).transfer(refundDeposit.amount);
+    _deposits[depositIndex].amount = 0;
+  }
+
+  function addUserToBlacklist(string githubUser) external onlyOwner {
+    _blacklistedGithubUsers.push(githubUser);
+  }
+
+  function removeUserFromBlacklist(string githubUser) external onlyOwner {
+    for (uint256 i = 0; i < _blacklistedGithubUsers.length; i++) {
+      if (_blacklistedGithubUsers[i] == githubUser) {
+        delete _blacklistedGithubUsers[i];
+      }
+    }
   }
 
   /// @dev Send deposit to contributor (anyone != deposit.sender).
   /// @param githubuUser The GitHub username of the user who wants to withdraw.
   /// @param type Issues = 1, Pull Requests = 2
   /// @param id The node ID of the issue or pr
-  function withdraw(string memory githubUser, uint8 type, uint256 id) external {
+  function withdraw(string memory githubUser, uint8 type, uint256 id) external notBlacklisted(githubUser) {
     // checks:
     // provided githubUser has repo with name of msg.sender (proof of github account, can receive funds) [chainlink->repourl->id]
     // pr is merged and pr author is the provided githubUser [chainlink->pr->merged]
@@ -175,5 +255,17 @@ contract MergePay is ChainlinkClient {
       _i /= 10;
     }
     return string(bstr);
+  }
+
+  /// @dev Mints MergeCoin based on the lock period. The minted amount equals a percentage of the value of the deposit.
+  /// @dev The percentage is based on how many days the deposit will be locked out of the maximum number of days to lock
+  /// @dev (actually half of it, to make rewards a bit higher, 180 / 2 = 90)
+  /// @param recipient The account receiving the minted MergeCoin
+  /// @param value The value of the deposit
+  /// @param lockDays The number of days the deposit will be locked
+  function mintMergeCoin(address recipient, uint256 value, uint64 lockDays) internal {
+    if (lockDays > 0 && value > 0) {
+      _mergeCoin.mint(recipient, value * (lockDays / (maxLockDays / 2));
+    }
   }
 }
