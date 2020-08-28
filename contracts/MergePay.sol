@@ -88,7 +88,7 @@ contract MergePay is ChainlinkClient {
   function register(string memory githubUser) external {
     Chainlink.Request memory request = buildChainlinkRequest(clJobId, address(this), this.registerConfirm.selector);
     request.add("username", githubUser);
-    request.add("repo", msg.sender);
+    request.add("repo", addressToString(msg.sender));
     bytes32 requestId = sendChainlinkRequestTo(clOracle, request, clFee);
     _users.push(User(msg.sender, githubUser, false, requestId));
   }
@@ -117,5 +117,25 @@ contract MergePay is ChainlinkClient {
     // githubUser is sender of a deposit
       // withdraw only own deposit
     // mint merge coin if withdrawer != deposit owner
+  }
+
+  function addressToString(address _address) public pure returns (string memory _uintAsString) {
+    uint _i = uint256(_address);
+    if (_i == 0) {
+      return "0";
+    }
+    uint j = _i;
+    uint len;
+    while (j != 0) {
+      len++;
+      j /= 10;
+    }
+    bytes memory bstr = new bytes(len);
+    uint k = len - 1;
+    while (_i != 0) {
+      bstr[k--] = byte(uint8(48 + _i % 10));
+      _i /= 10;
+    }
+    return string(bstr);
   }
 }
