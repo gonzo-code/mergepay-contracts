@@ -7,9 +7,8 @@ import "./MergeCoin.sol";
 contract MergePay is ChainlinkClient {
   struct Deposit {
     uint256 amount;
-    string repo;
-    string repoOwner;
-    uint64 prId;
+    uint8 type;
+    uint256 id;
     address sender;
   }
 
@@ -22,9 +21,8 @@ contract MergePay is ChainlinkClient {
 
   event DepositEvent(
     uint256 amount,
-    string repo,
-    string repoOwner,
-    uint64 prId,
+    uint8 type,
+    uint256 id,
     address sender
   );
   event RegistrationConfirmedEvent(
@@ -53,18 +51,16 @@ contract MergePay is ChainlinkClient {
   }
 
   // Deposit ETH on any pull request or issue on GitHub.
-  // TODO: accept issueId
   // TODO: lock up deposit
-  function deposit(string memory repo, string memory repoOwner, uint64 prId) external payable {
+  function deposit(uint8 type, uint256 id) external payable {
     require(msg.value > 0, "No ether sent.");
 
     // find existing deposit
     bool updatedExisting = false;
     for (uint256 i; i < _deposits.length; i++) {
       if (
-        keccak256(abi.encodePacked(_deposits[i].repo)) == keccak256(abi.encodePacked(repo)) &&
-        keccak256(abi.encodePacked(_deposits[i].repoOwner)) == keccak256(abi.encodePacked(repoOwner)) &&
-        _deposits[i].prId == prId &&
+        _deposits[i].type == type &&
+        _deposits[i].id == id &&
         _deposits[i].sender == msg.sender
       ) {
         // add amount to existing deposit
@@ -72,9 +68,8 @@ contract MergePay is ChainlinkClient {
         updatedExisting = true;
         emit DepositEvent(
           _deposits[i].amount,
-          _deposits[i].repo,
-          _deposits[i].repoOwner,
-          _deposits[i].prId,
+          _deposits[i].type,
+          _deposits[i].id,
           _deposits[i].sender
         );
         break;
@@ -83,9 +78,9 @@ contract MergePay is ChainlinkClient {
 
     // add new deposit
     if (!updatedExisting) {
-      Deposit memory newDeposit = Deposit(msg.value, repo, repoOwner, prId, msg.sender);
+      Deposit memory newDeposit = Deposit(msg.value, type, id, prId, msg.sender);
       _deposits.push(newDeposit);
-      emit DepositEvent(msg.value, repo, repoOwner, prId, msg.sender);
+      emit DepositEvent(msg.value, type, id, msg.sender);
     }
   }
 
@@ -121,7 +116,7 @@ contract MergePay is ChainlinkClient {
   function refund() external {}
 
   // Send deposit to contributor (anyone != deposit.sender)
-  function withdraw(string memory githubUser, string memory repo, string memory repoOwner, uint64 prId) external {
+  function withdraw(string memory githubUser, uint8 type, uint256 id) external {
     // checks:
     // provided githubUser has repo with name of msg.sender (proof of github account, can receive funds) [chainlink->repourl->id]
     // pr is merged and pr author is the provided githubUser [chainlink->pr->merged]
