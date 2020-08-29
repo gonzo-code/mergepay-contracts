@@ -24,7 +24,7 @@ contract MergePay is ChainlinkClient, Ownable {
 
   struct User {
     address account;
-    string githubUser; // TODO: use user ID instead
+    uint256 githubUser;
     bool confirmed;
     bytes32 chainlinkRequestId;
   }
@@ -38,7 +38,7 @@ contract MergePay is ChainlinkClient, Ownable {
 
   event RegistrationConfirmedEvent(
     address account,
-    string githubUser,
+    uint256 githubUser,
     bool confirmed,
     bytes32 chainlinkRequestId
   );
@@ -55,7 +55,7 @@ contract MergePay is ChainlinkClient, Ownable {
   uint256 private clFee;
 
   uint32 private maxLockDays = 180;
-  string[] private _blacklistedGithubUsers; // Blacklisted users cannot withdraw from their merged pull requests.
+  uint256[] private _blacklistedGithubUsers; // Blacklisted users cannot withdraw from their merged pull requests.
 
   /// @dev Initiates MergeCoin and Chainlink.
   /// @param mergeCoinAddress The contract address of MergeCoin
@@ -122,24 +122,24 @@ contract MergePay is ChainlinkClient, Ownable {
   /// @dev githubUser named after msg.sender. Adds user as unconfirmed and sends
   /// @dev a chainlink request, that will be fullfilled in registerConfirm.
   /// @param githubUser The GitHub username to register
-  function register(string memory githubUser) external  {
+  function register(uint256 githubUser) external  {
     Chainlink.Request memory request = buildChainlinkRequest(clJobIdRegister, address(this), this.registerConfirm.selector);
-    request.add("username", githubUser);
+    request.addInt("userId", int256(githubUser));
     request.add("repo", addressToString(msg.sender));
     bytes32 requestId = sendChainlinkRequestTo(clOracle, request, clFee);
 
     // check if user already exists
-    User storage existingUser;
+    int256 existingUserIndex = -1;
     for (uint256 i; i < _users.length; i++) {
       if (_users[i].githubUser == githubUser) {
-        existingUser = _users[i];
+        existingUserIndex = int256(i);
         break;
       }
     }
 
     // update request id or add new user
-    if (existingUser) {
-      existingUser.chainlinkRequestId = requestId;
+    if (existingUserIndex != -1) {
+      _users[uint256(existingUserIndex)].chainlinkRequestId = requestId;
     } else {
       _users.push(User(msg.sender, githubUser, false, requestId));
     }
@@ -167,7 +167,8 @@ contract MergePay is ChainlinkClient, Ownable {
   /// @dev Send deposit back to sender.
   function refund(uint8 issueOrPr, uint256 id) external {
     // find index
-    Deposit storage refundDeposit;
+    uint256 refundDepositIndex;
+    bool refundDepositFound = false;
     for (uint256 i; i < _deposits.length; i++) {
       if (
         _deposits[i].issueOrPr == issueOrPr &&
@@ -175,36 +176,39 @@ contract MergePay is ChainlinkClient, Ownable {
         _deposits[i].sender == msg.sender &&
         _deposits[i].amount > 0
       ) {
-        refundDeposit = _deposits[i];
+        refundDepositIndex = i;
+        refundDepositFound = true;
         break;
       }
     }
 
-    require(refundDeposit.amount > 0, "No deposit found.");
-    require(refundDeposit.lockedUntilTimestamp < now, "Deposit is locked.");
-    payable(msg.sender).transfer(refundDeposit.amount);
-    refundDeposit.amount = 0;
+    require(refundDepositFound, "No deposit found.");
+    require(_deposits[refundDepositIndex].lockedUntilTimestamp < now, "Deposit is locked.");
+    payable(msg.sender).transfer(_deposits[refundDepositIndex].amount);
+    _deposits[refundDepositIndex].amount = 0;
   }
 
   /// @dev Send deposit back to sender regardless of lock.
   function forceRefund(address recipient, uint8 issueOrPr, uint256 id) external onlyOwner {
     // find index
-    Deposit storage refundDeposit;
+    uint256 refundDepositIndex;
+    bool refundDepositFound = false;
     for (uint256 i; i < _deposits.length; i++) {
       if (
         _deposits[i].issueOrPr == issueOrPr &&
         _deposits[i].id == id &&
-        _deposits[i].sender == msg.sender &&
+        _deposits[i].sender == recipient &&
         _deposits[i].amount > 0
       ) {
-        refundDeposit = _deposits[i];
+        refundDepositIndex = i;
+        refundDepositFound = true;
         break;
       }
     }
 
-    require(refundDeposit.amount > 0, "No deposit found.");
-    payable(msg.sender).transfer(refundDeposit.amount);
-    refundDeposit.amount = 0;
+    require(refundDepositFound, "No deposit found.");
+    payable(recipient).transfer(_deposits[refundDepositIndex].amount);
+    _deposits[refundDepositIndex].amount = 0;
   }
 
   /// @dev Send deposit back to sender.
@@ -225,11 +229,11 @@ contract MergePay is ChainlinkClient, Ownable {
     payable(msg.sender).transfer(amount);
   }
 
-  function addUserToBlacklist(string memory githubUser) external onlyOwner {
+  function addUserToBlacklist(uint256 githubUser) external onlyOwner {
     _blacklistedGithubUsers.push(githubUser);
   }
 
-  function removeUserFromBlacklist(string memory githubUser) external onlyOwner {
+  function removeUserFromBlacklist(uint256 githubUser) external onlyOwner {
     for (uint256 i = 0; i < _blacklistedGithubUsers.length; i++) {
       if (_blacklistedGithubUsers[i] == githubUser) {
         delete _blacklistedGithubUsers[i];
@@ -250,7 +254,7 @@ contract MergePay is ChainlinkClient, Ownable {
 
     // get githubuUser for address
     User memory user;
-    for (uint256 i = 0; i < _users; i++) {
+    for (uint256 i = 0; i < _users.length; i++) {
       if (_users[i].account == msg.sender) {
         user = _users[i];
         break;
@@ -258,21 +262,21 @@ contract MergePay is ChainlinkClient, Ownable {
     }
     require(user.confirmed, "Your account is not registered.");
 
-    for (uint256 i = 0; i < _blacklistedGithubUsers; i++) {
+    for (uint256 i = 0; i < _blacklistedGithubUsers.length; i++) {
       require(user.githubUser != _blacklistedGithubUsers[i], "This GitHub account is blacklisted.");
     }
 
     bool depositsFound = false;
     for (uint256 i; i < _deposits.length; i++) {
-      if (_deposits[i].issueOrPr == 2 && _deposits[i].id = prId) {
+      if (_deposits[i].issueOrPr == 2 && _deposits[i].id == prId) {
         depositsFound = true;
       }
     }
     require(depositsFound, "There are no deposits for this pull request.");
 
-    Chainlink.Request memory request = buildChainlinkRequest(clJobIdWithdraw, address(this), this.withdrawalConfirm.selector);
-    request.add("username", user.githubUser);
-    request.add("prId", prId);
+    Chainlink.Request memory request = buildChainlinkRequest(clJobIdWithdraw, address(this), this.withdrawConfirm.selector);
+    request.addInt("userId", int256(user.githubUser));
+    request.addInt("prId", int256(prId));
     bytes32 requestId = sendChainlinkRequestTo(clOracle, request, clFee);
     _pendingWithdrawals.push(Withdrawal(msg.sender, prId, requestId, false));
   }
