@@ -148,7 +148,7 @@ contract MergePay is ChainlinkClient, Ownable {
   /// @dev Chainlink fullfill method. Sets unconfirmed user to confirmed if repo exists.
   /// @param _requestId The Chainlink request ID
   /// @param confirmed Whether a repo named after the address was found or not
-  function registerConfirm(bytes32 _requestId, bool confirmed) external {
+  function registerConfirm(bytes32 _requestId, bool confirmed) external recordChainlinkFulfillment(_requestId) {
     require(confirmed, "Account ownership could not be validated.");
     for (uint256 i = 0; i < _users.length; i++) {
       if (_users[i].chainlinkRequestId == _requestId) {
@@ -284,7 +284,7 @@ contract MergePay is ChainlinkClient, Ownable {
   /// @dev Chainlink fullfill method. Executes withdrawal.
   /// @param _requestId The Chainlink request ID
   /// @param confirmed Whether a repo named after the address was found or not
-  function withdrawConfirm(bytes32 _requestId, bool confirmed) external {
+  function withdrawConfirm(bytes32 _requestId, bool confirmed) external recordChainlinkFulfillment(_requestId) {
     require(confirmed, "Eligibility for withdrawal could not be validated. Is the pull request merged? Are you connected to the right GitHub account?");
     // get pending withdrawal
     Withdrawal storage pendingWithdrawal;
