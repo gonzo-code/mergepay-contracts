@@ -8,7 +8,7 @@ import "./SafeMath64.sol";
 import "./interfaces/AggregatorV2V3Interface.sol";
 import "./interfaces/AggregatorValidatorInterface.sol";
 import "./interfaces/LinkTokenInterface.sol";
-import "./vendor/SafeMath.sol";
+import { SafeMathChainlink as SafeMath } from "./vendor/SafeMathChainlink.sol";
 
 /**
  * @title The Prepaid Aggregator contract

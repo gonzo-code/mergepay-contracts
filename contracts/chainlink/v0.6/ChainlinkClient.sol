@@ -6,7 +6,7 @@ import "./interfaces/LinkTokenInterface.sol";
 import "./interfaces/ChainlinkRequestInterface.sol";
 import "./interfaces/PointerInterface.sol";
 import { ENSResolver as ENSResolver_Chainlink } from "./vendor/ENSResolver.sol";
-import { SafeMath as SafeMath_Chainlink } from "./vendor/SafeMath.sol";
+import { SafeMathChainlink as SafeMath_Chainlink } from "./vendor/SafeMathChainlink.sol";
 
 /**
  * @title The ChainlinkClient contract

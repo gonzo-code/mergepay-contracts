@@ -1,6 +1,6 @@
 pragma solidity ^0.6.0;
 
-import "./vendor/SafeMath.sol";
+import { SafeMathChainlink as SafeMath } from "./vendor/SafeMathChainlink.sol";
 import "./SignedSafeMath.sol";
 
 library Median {

@@ -1,6 +1,6 @@
 pragma solidity ^0.6.0;
 
-import { SafeMath as SafeMath_Chainlink } from "./vendor/SafeMath.sol";
+import { SafeMathChainlink as SafeMath_Chainlink } from "./vendor/SafeMathChainlink.sol";
 
 import "./interfaces/LinkTokenInterface.sol";
 

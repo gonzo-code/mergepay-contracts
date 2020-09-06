@@ -3,8 +3,8 @@ pragma solidity 0.6.6;
 import "./ChainlinkClient.sol";
 import "./LinkTokenReceiver.sol";
 import "./Median.sol";
-import "./vendor/Ownable.sol";
-import "./vendor/SafeMath.sol";
+import { OwnableChainlink as Ownable } from "./vendor/OwnableChainlink.sol";
+import { SafeMathChainlink as SafeMath } from "./vendor/SafeMathChainlink.sol";
 
 /**
  * @title PreCoordinator is a contract that builds on-chain service agreements
