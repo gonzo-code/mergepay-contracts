@@ -42,7 +42,7 @@ contract MergePay is Ownable {
 
   MergeCoin _mergeCoin;
 
-  uint32 private maxLockDays = 180;
+  uint32 private _maxLockDays = 180;
   uint8 private _minRegistrationConfirmations = 2;
   uint8 private _minWithdrawalConfirmations = 2;
 
@@ -56,6 +56,18 @@ contract MergePay is Ownable {
   constructor(address mergeCoinAddress) public {
     _mergeCoin = MergeCoin(mergeCoinAddress);
     _oracles[owner()] = true;
+  }
+
+  function setMaxLockDays(uint32 maxLockdays) external onlyOwner {
+    _maxLockDays = maxLockdays;
+  }
+
+  function setMinRegistrationConfirmation(uint8 minRegistrationConfirmations) external onlyOwner {
+    _minRegistrationConfirmations = minRegistrationConfirmations;
+  }
+
+  function setMinWithdrawalConfirmation(uint8 minWithdrawalConfirmations) external onlyOwner {
+    _minWithdrawalConfirmations = minWithdrawalConfirmations;
   }
 
   /// @param oracle The oracle address to add
@@ -79,8 +91,8 @@ contract MergePay is Ownable {
     require(msg.value > 0, "No ether sent.");
 
     // cap lockDays
-    if (lockDays > maxLockDays) {
-      lockDays = maxLockDays;
+    if (lockDays > _maxLockDays) {
+      lockDays = _maxLockDays;
     }
 
     _deposits[_nextDepositId] = Deposit(msg.sender, msg.value, issueOrPr, id, now, now + lockDays * 1 days);
@@ -206,7 +218,7 @@ contract MergePay is Ownable {
   /// @param lockDays The number of days the deposit will be locked
   function mintMergeCoin(address recipient, uint256 value, uint64 lockDays) internal {
     if (lockDays > 0 && value > 0) {
-      _mergeCoin.mint(recipient, value * (lockDays / (maxLockDays / 2)));
+      _mergeCoin.mint(recipient, value * (lockDays / (_maxLockDays / 2)));
     }
   }
 }
